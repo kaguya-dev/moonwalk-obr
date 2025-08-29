@@ -163,7 +163,7 @@ class A4988Dual:
         :param duration: tempo total (segundos) para completar os passos
         """
         steps = list(steps)
-        if duration <= 0 or steps[0] <= 0 and steps[1] <= 0:
+        if duration <= 0 or steps[0] <= 0 or steps[1] <= 0:
             return
         delays = []
         for s in steps:
@@ -315,6 +315,9 @@ hc_sr04_sensors = [ultrassonic_left, ultrassonic_right, ultrassonic_frontal]
 sensor_Left.start_reading()
 sensor_Right.start_reading()
 try:
+    lost_line_time = None
+    lost_line_timeout = 2.5  # seconds
+
     while True:
         async_update_info(
             irSensors.read_all(),
@@ -328,23 +331,37 @@ try:
         ir_sum = sum(val * (i + 1) for i, val in enumerate(ir_values))
         ir_pro = ir_sum - 3
 
-        # Ajusta velocidades dos motores conforme o valor de ir_pro
-        # Detecta verde à esquerda ou direita do preto central
         green_left = sensor_Left.latest_data and sensor_Left.latest_data.get("green", 0) > 1000
         green_right = sensor_Right.latest_data and sensor_Right.latest_data.get("green", 0) > 1000
-
-        # Considera preto central se o sensor central (índice 2) está ativado (linha preta)
         central_black = ir_values[2] == 0
 
+        # Detect if all sensors are "off" (tape lost)
+        tape_lost = all(val == 1 for val in ir_values)
+
+        if tape_lost:
+            if lost_line_time is None:
+                lost_line_time = time.time()
+            elapsed = time.time() - lost_line_time
+            if elapsed < lost_line_timeout:
+                # Keep moving forward
+                motores.setSpeed(2, 2)
+                motores.rotate((0.25, 0.25))
+                continue
+            else:
+                # Stop and go back
+                motores.setSpeed(3, 3)
+                motores.backward(200, lost_line_timeout)
+                lost_line_time = None  # Reset after action
+                continue
+        else:
+            lost_line_time = None  # Reset if tape found
+
         if central_black and green_left and green_right:
-            # Verde dos dois lados: faz 180 graus e volta
             motores.backward(200, 1)
             motores.left(350, 1.5)
         elif central_black and green_left:
-            # Verde à esquerda: vira à esquerda
             motores.left(100, 0.5)
         elif central_black and green_right:
-            # Verde à direita: vira à direita
             motores.right(100, 0.5)
         elif ir_pro == 0:
             motores.setSpeed(2, 2)
